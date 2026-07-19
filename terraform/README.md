@@ -12,10 +12,10 @@
 | `provider.tf` | Config do provider OCI (region, tenancy, user, fingerprint, chave API) |
 | `network.tf` | VCN + Internet Gateway + Route Table + Security List + Subnet pública |
 | `compute.tf` | `oci_core_instance.hermes` — VM Ampere A1 (2 OCPU / 12 GB), Ubuntu 24.04 Minimal aarch64 |
-| `variables.tf` | Todas as variáveis (com defaults) |
+| `variables.tf` | Todas as variáveis) |
 | `outputs.tf` | `hermes_public_ip` e `ssh_command` |
 | `cloud-init.yaml` | Provisionamento inicial da VM (pacotes base + firewall) |
-| `terraform.tfvars` | Valores locais das variáveis (NÃO comitar segredos reais) |
+| `terraform.tfvars` | Valores locais das variáveis  |
 
 ## Detalhes da VM
 
