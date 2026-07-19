@@ -1,0 +1,63 @@
+#cloud-config
+# ==========================================================================
+# cloud-init.yaml — provisionamento inicial da VM Hermes (Ubuntu 24.04)
+# Instala dependências base; a instalação do Hermes em si é feita depois,
+# manualmente ou por script, para manter controle (regra do Mi).
+#
+# NOTA (2026-07-15): a OCI bloqueia saída HTTP (porta 80) nesta subnet —
+# só HTTPS (443) passa. O sources.list padrão aponta para o mirror regional
+# em HTTP e o apt quebrava ("Network is unreachable" / timeout). Forçamos
+# o mirror global em HTTPS e travamos o sources.list para não ser reescrito.
+# ==========================================================================
+
+# Trava o sources.list gerado pelo cloud-init para não ser sobrescrito
+apt_preserve_sources_list: true
+
+# Sobrescreve o ubuntu.sources com mirror em HTTPS (ports.ubuntu.com).
+# Mantém os mesmos Suites/Components do padrão, só troca o transporte/URI.
+write_files:
+  - path: /etc/apt/sources.list.d/ubuntu.sources
+    permissions: "0644"
+    owner: root:root
+    content: |
+      Types: deb
+      URIs: https://ports.ubuntu.com/ubuntu-ports
+      Suites: noble noble-updates noble-backports
+      Components: main universe restricted multiverse
+      Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+
+      Types: deb
+      URIs: https://ports.ubuntu.com/ubuntu-ports
+      Suites: noble-security
+      Components: main universe restricted multiverse
+      Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+
+package_update: true
+package_upgrade: true
+
+# Fuso horário da VM (Praia Grande / São Paulo, UTC-3)
+timezone: America/Sao_Paulo
+
+packages:
+  - curl
+  - git
+  - vim
+  - htop
+  - ufw
+  - python3
+  - python3-venv
+  - python3-pip
+  - ca-certificates
+
+runcmd:
+  # Firewall básico: libera SSH e fecha o resto (defesa em profundidade).
+  # Protegido contra 'ufw: not found' caso o pacote falhe no install.
+  - |
+    if command -v ufw >/dev/null 2>&1; then
+      ufw allow OpenSSH
+      ufw --force enable
+    else
+      echo "AVISO: ufw nao instalado — pulando firewall de host (confia na OCI security list)"
+    fi
+
+final_message: "VM Hermes pronta — base instalada. Acesse via SSH para instalar o Hermes."

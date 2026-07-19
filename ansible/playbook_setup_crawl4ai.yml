@@ -1,0 +1,148 @@
+---
+- name: Configurar Crawl4AI (extract self-hosted) na VM OCI
+  hosts: all
+  gather_facts: true
+  vars:
+    hermes_home: "/home/ubuntu"
+    crawl4ai_port: 8000
+    crawl4ai_base_url: "http://127.0.0.1:{{ crawl4ai_port }}"
+
+  tasks:
+    - name: Instalar ddgs + httpx no venv do Hermes (search + plugin extract)
+      command: "{{ hermes_home }}/.local/bin/uv pip install --python {{ hermes_home }}/.hermes/hermes-agent/venv/bin/python ddgs httpx"
+      become: false
+      environment:
+        PATH: "/usr/bin:/bin:{{ hermes_home }}/.local/bin:{{ ansible_env.PATH }}"
+
+    - name: Instalar crawl4ai + fastapi + uvicorn via uv tool
+      command: "{{ hermes_home }}/.local/bin/uv tool install crawl4ai fastapi uvicorn"
+      args:
+        creates: "{{ hermes_home }}/.local/bin/uv"
+      become: false
+
+    - name: Copiar o servidor HTTP do Crawl4AI
+      copy:
+        src: files/crawl4ai_server.py
+        dest: "{{ hermes_home }}/crawl4ai_server.py"
+        owner: ubuntu
+        group: ubuntu
+        mode: "0755"
+      become: false
+
+    - name: Instalar o unit systemd do Crawl4AI
+      copy:
+        src: files/crawl4ai.service
+        dest: /etc/systemd/system/crawl4ai.service
+        mode: "0644"
+      become: true
+
+    - name: Recarregar o systemd
+      systemd:
+        daemon_reload: true
+      become: true
+
+    - name: Habilitar e iniciar o servico Crawl4AI
+      systemd:
+        name: crawl4ai
+        enabled: true
+        state: started
+      become: true
+
+    - name: Aguardar o servico subir (healthcheck)
+      uri:
+        url: "{{ crawl4ai_base_url }}/health"
+        status_code: 200
+      register: _health
+      until: _health.status == 200
+      retries: 10
+      delay: 3
+
+    - name: Criar diretorios de plugin (__init__.py vazios p/ pacotes importaveis)
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: ubuntu
+        group: ubuntu
+        mode: "0755"
+      loop:
+        - "{{ hermes_home }}/.hermes/plugins"
+        - "{{ hermes_home }}/.hermes/plugins/web"
+
+    - name: Copiar __init__.py vazios dos pacotes de plugin
+      copy:
+        src: "plugins/{{ item }}"
+        dest: "{{ hermes_home }}/.hermes/plugins/{{ item }}"
+        owner: ubuntu
+        group: ubuntu
+        mode: "0644"
+      loop:
+        - "__init__.py"
+        - "web/__init__.py"
+      become: false
+
+    - name: Copiar o plugin do Hermes (crawl4ai) para a VM
+      copy:
+        src: plugins/web/crawl4ai/
+        dest: "{{ hermes_home }}/.hermes/plugins/web/crawl4ai/"
+        owner: ubuntu
+        group: ubuntu
+        mode: "0755"
+      become: false
+
+    - name: Habilitar o plugin no Hermes (desatachado, sem travar SSH)
+      command: >-
+        setsid bash -c 'hermes plugins enable crawl4ai > /tmp/plugin_enable.log 2>&1 < /dev/null'
+      become: false
+      environment:
+        PATH: "/usr/bin:/bin:{{ hermes_home }}/.local/bin:{{ ansible_env.PATH }}"
+      async: 30
+      poll: 0
+
+    - name: Aguardar o plugin habilitar (desatachado)
+      pause:
+        seconds: 8
+
+    - name: Verificar se o plugin crawl4ai foi habilitado
+      command: "{{ hermes_home }}/.local/bin/hermes plugins list | grep crawl4ai"
+      become: false
+      environment:
+        PATH: "/usr/bin:/bin:{{ hermes_home }}/.local/bin:{{ ansible_env.PATH }}"
+      register: _plugins
+      failed_when: false
+
+    - name: Mostrar só a linha do crawl4ai
+      debug:
+        msg: "{{ _plugins.stdout_lines | list }}"
+
+    - name: Apontar web.backend para ddgs (search nativo, sem Docker) no config.yaml
+      # regexp casa a linha 'backend:' existente (evita linha duplicada no fim)
+      lineinfile:
+        path: "{{ hermes_home }}/.hermes/config.yaml"
+        regexp: '^\s*backend:'
+        line: "  backend: ddgs"
+        state: present
+      become: false
+      changed_when: true   # forca o handler a disparar mesmo que a linha ja exista
+      notify: Restart Hermes
+
+    - name: Apontar web.extract_backend para crawl4ai no config.yaml
+      lineinfile:
+        path: "{{ hermes_home }}/.hermes/config.yaml"
+        regexp: '^\s*extract_backend:'
+        line: "  extract_backend: crawl4ai"
+        insertafter: "^web:"
+        state: present
+      become: false
+      changed_when: true   # forca o handler a disparar mesmo que a linha ja exista
+      notify: Restart Hermes
+
+  handlers:
+    - name: Restart Hermes
+      systemd:
+        name: hermes-gateway
+        state: restarted
+        scope: user
+      become: true
+      become_user: ubuntu
+      environment:
+        XDG_RUNTIME_DIR: "/run/user/{{ ansible_user_uid }}"

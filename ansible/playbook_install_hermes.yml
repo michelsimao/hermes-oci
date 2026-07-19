@@ -1,0 +1,139 @@
+---
+- name: Instalar o Hermes Agent na VM OCI
+  hosts: hermes_vm
+  become: false            # roda como usuario ubuntu (sem sudo)
+  vars:
+    hermes_home: /home/ubuntu/.hermes
+    hermes_bin_path: "/home/ubuntu/.local/bin/hermes"
+    uv_bin_path: "/home/ubuntu/.local/bin/uv"    
+    ansible_ssh_common_args: >-
+      -o StrictHostKeyChecking=no
+      -o UserKnownHostsFile=/dev/null
+      -o ControlMaster=no
+      -o ControlPersist=0
+      -o ServerAliveInterval=30
+      -o ServerAliveCountMax=10
+    ansible_ssh_retries: 10
+
+  pre_tasks:
+    - name: Wait until SSH is available
+      ansible.builtin.wait_for_connection:
+        timeout: 600
+
+    - name: Wait for cloud-init (poll de conexoes curtas)
+      command: cloud-init status
+      changed_when: false
+      # cloud-init status sai com rc=2 quando houve erro em execucao anterior
+      # (ex.: mirror HTTP no boot velho), mas ainda reporta "status: done".
+      # Nao marcamos como falha pelo rc; o sucesso e' o stdout conter "done".
+      failed_when: "'status: done' not in ci.stdout"
+      register: ci
+      until: "'status: done' in ci.stdout"
+      retries: 40
+      delay: 15
+
+    - name: Gather facts
+      setup:
+
+  tasks:
+    - name: Baixar o installer do uv para arquivo local
+      get_url:
+        url: https://astral.sh/uv/install.sh
+        dest: /tmp/uv_install.sh
+        mode: "0755"
+
+    - name: Instalar o uv (roda o script baixado, sem pipe)
+      command: /tmp/uv_install.sh
+      args:
+        creates: "{{ ansible_env.HOME }}/.local/bin/uv"
+      environment:
+        PATH: "{{ ansible_env.HOME }}/.local/bin:{{ ansible_env.PATH }}"
+
+    - name: Baixar o installer do Hermes para arquivo local
+      get_url:
+        url: https://hermes-agent.nousresearch.com/install.sh
+        dest: /tmp/hermes_install.sh
+        mode: "0755"
+
+    - name: Disparar o installer do Hermes em background (desatachado do SSH)
+      shell: "setsid bash -c '/tmp/hermes_install.sh > /tmp/hermes_install.log 2>&1 < /dev/null' >/dev/null 2>&1 &"
+      args:
+        creates: "{{ ansible_env.HOME }}/.local/bin/hermes"
+      environment:
+        HERMES_HOME: "{{ hermes_home }}"
+        PATH: "/usr/bin:/bin:{{ ansible_env.HOME }}/.local/bin:{{ ansible_env.PATH }}"
+
+    - name: Aguardar o installer do Hermes concluir (poll de conexoes curtas)
+      stat:
+        path: "{{ ansible_env.HOME }}/.local/bin/hermes"
+      register: src_stat
+      until: src_stat.stat.exists | default(false)
+      retries: 80
+      delay: 15
+      become: false
+
+    - name: Confirmar que o binario hermes existe
+      stat:
+        path: "{{ ansible_env.HOME }}/.local/bin/hermes"
+      register: hermes_bin
+
+    - name: Falhar se o binario nao foi criado
+      fail:
+        msg: "Hermes nao foi instalado - confira o log do installer"
+      when: not hermes_bin.stat.exists
+
+    - name: Gerar config.yaml a partir do template (sem hermes setup)
+      template:
+        src: config.yaml.j2
+        dest: "{{ hermes_home }}/config.yaml"
+        owner: ubuntu
+        group: ubuntu
+        mode: "0644"
+      become: false
+
+    - name: Gerar .env a partir do vault (segredos criptografados)
+      template:
+        src: hermes.env.j2
+        dest: "{{ hermes_home }}/.env"
+        owner: ubuntu
+        group: ubuntu
+        mode: "0600"
+      become: false
+
+    - name: Instalar o hermes-gateway como user service (config ja pronto)
+      command: >-
+        setsid bash -c '/home/ubuntu/.local/bin/hermes gateway install > /tmp/hermes_gw_install.log 2>&1 < /dev/null'
+      become: true
+      become_user: ubuntu
+      environment:
+        HERMES_HOME: "{{ hermes_home }}"
+        XDG_RUNTIME_DIR: "/run/user/{{ ansible_user_uid }}"
+        PATH: "/usr/bin:/bin:/home/ubuntu/.local/bin:{{ ansible_env.PATH }}"
+      register: gw_install
+      failed_when: false
+
+    - name: Iniciar o hermes-gateway
+      command: "/home/ubuntu/.local/bin/hermes gateway start"
+      become: true
+      become_user: ubuntu
+      environment:
+        HERMES_HOME: "{{ hermes_home }}"
+        XDG_RUNTIME_DIR: "/run/user/{{ ansible_user_uid }}"
+        PATH: "/usr/bin:/bin:/home/ubuntu/.local/bin:{{ ansible_env.PATH }}"
+      register: gw_start
+      failed_when: false
+
+    - name: Mostrar status do gateway
+      command: "/home/ubuntu/.local/bin/hermes gateway status"
+      become: true
+      become_user: ubuntu
+      environment:
+        HERMES_HOME: "{{ hermes_home }}"
+        XDG_RUNTIME_DIR: "/run/user/{{ ansible_user_uid }}"
+        PATH: "/usr/bin:/bin:/home/ubuntu/.local/bin:{{ ansible_env.PATH }}"
+      register: gw_status
+      failed_when: false
+
+    - name: Debug do status do gateway
+      debug:
+        msg: "{{ gw_status.stdout_lines | default([]) }}"

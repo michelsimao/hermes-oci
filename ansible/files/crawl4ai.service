@@ -1,0 +1,17 @@
+[Unit]
+Description=Crawl4AI local HTTP server (lightweight extract backend for Hermes)
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu
+Environment=CRAWL4AI_HOST=127.0.0.1
+Environment=CRAWL4AI_PORT=8000
+# uv-managed python with crawl4ai + fastapi installed
+ExecStart=/home/ubuntu/.local/bin/uv run --with crawl4ai --with fastapi --with uvicorn python /home/ubuntu/crawl4ai_server.py
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
