@@ -1,38 +1,43 @@
 # Projeto Oracle — Hermes Agent 24/7 na OCI
 
----
+## Visão Geral
 
-## Objetivo
+Este repositório provisiona e configura o **Hermes Agent** para execução contínua
+(24/7) em uma máquina virtual da **Oracle Cloud Infrastructure (OCI)**. O objetivo
+é obter uma implantação enxuta, reprodutível e baseada em perfil "nuvem".
 
-Subir o **Hermes Agent 24/7** numa VM **Oracle Cloud (OCI)**, perfil "nuvem",
-enxuto e reprodutível. Fluxo: **Terraform** cria a infraestrutura (rede + VM) →
-**Ansible** instala e configura o Hermes, o buscador e o extrator de páginas.
+O fluxo de provisionamento divide-se em duas etapas:
 
+1. **Terraform** cria a infraestrutura subjacente (rede e máquina virtual).
+2. **Ansible** instala e configura o Hermes, o mecanismo de busca e o extrator
+   de páginas na instância recém-criada.
 
-## Recursos
+## Componentes
 
-- **Busca web** = `ddgs` (nativo, sem Docker). 
-- **Extract de páginas** = `crawl4ai` self-hosted em modo HTTP (sem Chromium/Docker).
-- Segredos do Hermes vêm de **Ansible Vault** → `.env` com mode `0600`, não texto aberto.
-- Gateway roda como **systemd user service** (sem sudo no próprio Hermes).
-- Idioma padrão da conversa = **`pt-BR`** (configurado no template da VM).
+- **Busca web**: `ddgs` (nativo, sem dependência de contêineres).
+- **Extração de páginas**: `crawl4ai` em execução local (self-hosted), em modo
+  HTTP, sem Chromium ou Docker.
+- **Segredos do Hermes**: armazenados em Ansible Vault e materializados em `.env`
+  com permissão `0600` — nunca expostos em texto aberto.
+- **Gateway**: executado como systemd user service (sem privilégios de
+  administrador para o próprio Hermes).
+- **Idioma padrão**: `pt-BR`, definido no template de configuração da VM.
 
-## Estrutura do repositório
+## Estrutura do Repositório
 
-| Pasta | Conteúdo |
-|---|---|
-| `terraform/` | Infra na OCI (VCN, subnet, gateway, VM Ampere, cloud-init) |
-| `ansible/` | Playbooks de instalação/config, templates, plugin crawl4ai, inventory |
-| `README.md` (raiz) | Este arquivo — visão geral e objetivos |
-| `runbook-oracle.md` | Plano de deploy passo a passo (Fase 1 / Fase 2) |
-| `migration.md` | Matriz de migração (o que levar do laptop vs deixar) |
+| Caminho            | Conteúdo                                                        |
+|--------------------|-----------------------------------------------------------------|
+| `terraform/`       | Infraestrutura na OCI (VCN, subnet, gateway, VM Ampere, cloud-init). Documentado em `terraform/README.md`. |
+| `ansible/`         | Playbooks de instalação e configuração, templates, plugin crawl4ai e inventory. Documentado em `ansible/README.md`. |
+| `README.md` (raiz) | Este arquivo — visão geral e objetivos do projeto.              |
 
+## Reprodução do Ambiente
 
-## Como reproduzir do zero
+Consulte `terraform/README.md` e `ansible/README.md` para o detalhamento de cada
+etapa. Em resumo:
 
-1. `terraform init && terraform apply` na pasta `terraform/` → anota o IP público (output).
-2. Ajusta o `inventory.ini` do Ansible com o **novo IP** (passo obrigatório!).
-3. `ansible-playbook -i ansible/inventory.ini ansible/playbook_install_hermes.yml`
-4. `ansible-playbook -i ansible/inventory.ini ansible/playbook_setup_crawl4ai.yml`
-5. Testa da VM: web search e extração de página.
-
+1. Aplicar o Terraform na pasta `terraform/` e registrar o IP público gerado.
+2. Atualizar o `inventory.ini` do Ansible com o novo IP (etapa obrigatória).
+3. Executar o playbook de instalação do Hermes.
+4. Executar o playbook de configuração do crawl4ai.
+5. Validar busca web e extração de páginas a partir da VM.
